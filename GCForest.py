@@ -108,7 +108,7 @@ class gcForest(object):
         setattr(self, 'tolerance', tolerance)
         setattr(self, 'n_jobs', n_jobs)
 
-    def fit(self, X, y):
+    def fit(self, X, y, weight=None):
         """ Training the gcForest on input data X and associated target y.
 
         :param X: np.array
@@ -118,12 +118,19 @@ class gcForest(object):
         :param y: np.array
             1D array containing the target values.
             Must be of shape [n_samples]
+
+        :param weight: np.array (default=None)
+            Weight for each samples.
+            Must be of shape [n_samples]
         """
         if np.shape(X)[0] != len(y):
             raise ValueError('Sizes of y and X do not match.')
 
+        if weight is not None and weight.shape != y.shape:
+            raise ValueError('Sizes of weight and y do not match.')
+
         mgs_X = self.mg_scanning(X, y)
-        _ = self.cascade_forest(mgs_X, y)
+        _ = self.cascade_forest(mgs_X, y, weight)
 
     def predict_proba(self, X):
         """ Predict the class probabilities of unknown samples X.
@@ -322,7 +329,7 @@ class gcForest(object):
 
         return sliced_sqce, sliced_target
 
-    def cascade_forest(self, X, y=None):
+    def cascade_forest(self, X, y=None, weight=None):
         """ Perform (or train if 'y' is not None) a cascade forest estimator.
 
         :param X: np.array
@@ -331,6 +338,10 @@ class gcForest(object):
 
         :param y: np.array (default=None)
             Target values. If 'None' perform training.
+        
+        :param weight_test: np.array (default=None)
+            Weight for each samples.
+            Must be of the same shape as the target values
 
         :return: np.array
             1D array containing the predicted class for each input sample.
@@ -341,16 +352,17 @@ class gcForest(object):
             max_layers = getattr(self, 'cascade_layer')
             tol = getattr(self, 'tolerance')
 
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size)
+            X_train, X_test, y_train, y_test, weight_train, weight_test = \
+                train_test_split(X, y, weight, test_size=test_size)
 
             self.n_layer += 1
             prf_crf_pred_ref = self._cascade_layer(X_train, y_train)
-            accuracy_ref = self._cascade_evaluation(X_test, y_test)
+            accuracy_ref = self._cascade_evaluation(X_test, y_test, weight_test)
             feat_arr = self._create_feat_arr(X_train, prf_crf_pred_ref)
 
             self.n_layer += 1
             prf_crf_pred_layer = self._cascade_layer(feat_arr, y_train)
-            accuracy_layer = self._cascade_evaluation(X_test, y_test)
+            accuracy_layer = self._cascade_evaluation(X_test, y_test, weight_test)
 
             while accuracy_layer > (accuracy_ref + tol) and self.n_layer <= max_layers:
                 accuracy_ref = accuracy_layer
@@ -358,7 +370,7 @@ class gcForest(object):
                 feat_arr = self._create_feat_arr(X_train, prf_crf_pred_ref)
                 self.n_layer += 1
                 prf_crf_pred_layer = self._cascade_layer(feat_arr, y_train)
-                accuracy_layer = self._cascade_evaluation(X_test, y_test)
+                accuracy_layer = self._cascade_evaluation(X_test, y_test, weight_test)
 
             if accuracy_layer < accuracy_ref :
                 n_cascadeRF = getattr(self, 'n_cascadeRF')
@@ -423,7 +435,7 @@ class gcForest(object):
 
         return prf_crf_pred
 
-    def _cascade_evaluation(self, X_test, y_test):
+    def _cascade_evaluation(self, X_test, y_test, weight_test=None):
         """ Evaluate the accuracy of the cascade using X and y.
 
         :param X_test: np.array
@@ -433,12 +445,16 @@ class gcForest(object):
         :param y_test: np.array
             Test target values.
 
+        :param weight_test: np.array (default=None)
+            Weight for each samples.
+            Must be of the same shape as y_test
+
         :return: float
             the cascade accuracy.
         """
         casc_pred_prob = np.mean(self.cascade_forest(X_test), axis=0)
         casc_pred = np.argmax(casc_pred_prob, axis=1)
-        casc_accuracy = accuracy_score(y_true=y_test, y_pred=casc_pred)
+        casc_accuracy = accuracy_score(y_true=y_test, y_pred=casc_pred, sample_weight=weight_test)
         print('Layer validation accuracy = {}'.format(casc_accuracy))
 
         return casc_accuracy
